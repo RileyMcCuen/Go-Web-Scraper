@@ -16,9 +16,9 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("Starting...")
-	settings := crawler.NewScrapeSettings(*depth, 1, 1, 1)
+	settings := crawler.NewCrawlSettings(*depth, 1, 1, 1)
 	fmt.Println("Beginning Scraping...")
-	ret := crawler.Scrape(*url, settings)
+	ret := crawler.Crawl(*url, settings)
 	fmt.Println("Done!\nHere are your results:")
 	fmt.Println("")
 	ret.Print()
