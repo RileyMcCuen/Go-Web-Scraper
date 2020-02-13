@@ -2,12 +2,8 @@ package crawler
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"regexp"
 )
-
-var urlReg = regexp.MustCompile("(href|src|action)=\"([a-zA-Z0-9:/\\-._~]+)\"")
 
 // CrawledEntry is an entry of data that was crawled from the site.
 type CrawledEntry struct {
@@ -18,26 +14,27 @@ type CrawledEntry struct {
 	children []*CrawledEntry
 }
 
-// Print prints out the tree structure of a crawled entry
-func (s *CrawledEntry) Print() {
+func (s *CrawledEntry) print(tabs string) {
 	if s == nil {
 		fmt.Println("This entry is nil and cannot be printed.")
 		return
-	}
-	tabs := ""
-	for i := uint(0); i < s.depth; i++ {
-		tabs += "\t"
 	}
 	if s.err != nil {
 		fmt.Printf("%s%s\n", tabs, s.err.Error())
 		return
 	}
 	fmt.Printf("%s%s\n", tabs, s.url)
+	nextTabs := tabs + "\t"
 	for _, child := range s.children {
 		if child != nil {
-			child.Print()
+			child.print(nextTabs)
 		}
 	}
+}
+
+// Print prints out the tree structure of a crawled entry
+func (s *CrawledEntry) Print() {
+	s.print("")
 }
 
 // newCrawledEntry creates a new crawled entry
@@ -62,25 +59,16 @@ func NewCrawlSettings(maxDepth uint, waitTime uint, maxSimulRequests uint, maxQu
 }
 
 func getFileType(resp *http.Response) string {
+	if resp == nil {
+		return "?"
+	}
 	return resp.Header.Get("Content-type")
 }
 
-func findAll(data []byte) []string {
-	all := urlReg.FindAllSubmatch(data, -1)
-	ret := make([]string, len(all))
-	for ind, match := range all {
-		ret[ind] = string(match[2])
-	}
-	return ret
-}
-
-func getURLsFromResponse(resp *http.Response) []string {
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return make([]string, 0)
-	}
-	ret := findAll(data)
-	return ret
+func getResponseAndFileType(url string) (*http.Response, string, error) {
+	val, err := http.Get(url)
+	fileType := getFileType(val)
+	return val, fileType, err
 }
 
 type crawler struct {
@@ -98,25 +86,18 @@ func newCrawler(settings *CrawlSettings) *crawler {
 }
 
 func (crawler *crawler) crawl(depth uint, url string, id int, entry *CrawledEntry) {
-	val, err := http.Get(url)
-	if err != nil {
-		entry.children[id] = newCrawledEntry(depth, url, "?", err, 0)
-	} else {
-		fileType := getFileType(val)
-		if depth == crawler.s.maxDepth {
-			entry.children[id] = newCrawledEntry(depth, url, fileType, nil, 0)
-		} else {
-			newURLs := getURLsFromResponse(val)
-			newEntry := newCrawledEntry(depth, url, fileType, nil, uint(len(newURLs)))
-			entry.children[id] = newEntry
-			for ind, newURL := range newURLs {
-				newParsedURL, err := nextURL(url, newURL)
-				if err == nil {
-					newURL = newParsedURL.String()
-					if crawler.c.add(newURL) {
-						crawler.q.enqueue(func() { crawler.crawl(depth+1, newURL, ind, newEntry) })
-					}
-				}
+	val, fileType, err := getResponseAndFileType(url)
+	curEntry := newCrawledEntry(depth, url, fileType, err, 0)
+	entry.children[id] = curEntry
+	if err == nil && depth != crawler.s.maxDepth {
+		newURLs, err := getURLsFromResponse(val)
+		if err != nil {
+			return
+		}
+		curEntry.children = make([]*CrawledEntry, uint(len(newURLs)))
+		for ind, newURL := range newURLs {
+			if crawler.c.add(newURL.String()) {
+				crawler.q.enqueue(func() { crawler.crawl(depth+1, newURL.String(), ind, curEntry) })
 			}
 		}
 	}
